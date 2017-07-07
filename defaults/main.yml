@@ -1,0 +1,52 @@
+---
+# Global setting of how long apt cache is valid
+docker_apt_cache_valid_time: 600
+
+# Determines whether to install AuFS driver on Ubuntu 14.04 LTS
+docker_aufs_enabled: yes
+
+# The official key information from Docker
+docker_apt_key_url: "https://download.docker.com/linux/ubuntu/gpg"
+docker_apt_key_sig: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+
+# Set the release channel: to add the edge or testing repository, add the word edge or testing (or both) after the word stable below.
+docker_apt_release_channel: "stable"
+# Set the host architecture for Docker: currently supported is amd64 (default), armhf, and s390x
+docker_architecture: "amd64"
+# Set the apt repository url according to the information above and ansible set_facts module
+docker_apt_repository: "deb [arch={{ docker_architecture }}] https://download.docker.com/linux/{{ ansible_distribution|lower }} {{ ansible_distribution_release }} {{ docker_apt_release_channel }}"
+
+# Set the Docker Edition: "ce" (Community Edition) or "ee" (Enterprise Edition).
+docker_edition: "ce"
+# Set the specific version of docker (default: latest)
+docker_version: "latest"
+# Set the docker package according to the information above
+docker_package: "docker-{{ docker_edition }}{% if docker_version != 'latest' %}={{ docker_version }}{% endif %}"
+
+# IMPORTANT: The docker daemon fails to start if an option is duplicated between the file and the flags, regardless their value.
+# See https://docs.docker.com/engine/reference/commandline/dockerd/
+
+# A dict of options that are written into Docker's daemon.json config file.
+# For example to set the storage storage-driver back to devicemapper:
+# docker_config:
+#   storage-driver: devicemapper
+docker_config: {}
+
+# Configuration of dockerd via DOCKER_OPTS environment variable
+# The options set in the configuration file must not conflict with options set via flags.
+docker_opts: ""
+
+# Determine whether the docker role should install pip packages
+docker_install_pip: true
+docker_install_setuptools: true
+docker_version_pip: latest
+docker_version_setuptools: latest
+
+# IMPORTANT: Ansible requires pip to install docker and docker-compose to issue docker commands via Ansible!
+# Determines whether the docker role should install docker and docker-compose via pip
+pip_install_docker: true
+pip_version_docker: latest
+# As docker-compose depends on docker
+# If pip_install_docker_compose is true then pip_install_docker is ignored
+pip_install_docker_compose: true
+pip_version_docker_compose: latest

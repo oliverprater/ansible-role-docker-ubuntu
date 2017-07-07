@@ -1,0 +1,20 @@
+galaxy_info:
+  author: Oliver Prater
+  description: Install Docker CE or EE on Ubuntu 14.04 LTS and 16.04 LTS
+  company: "Findwhatyoulike GmbH"
+  license: "license (BSD, MIT)"
+  min_ansible_version: 2.0
+  platforms:
+  - name: Ubuntu
+    versions:
+    - trusty
+    - xenial
+  galaxy_tags:
+    - server
+    - system
+    - containers
+    - docker
+    - orchestration
+    - compose
+
+dependencies: []

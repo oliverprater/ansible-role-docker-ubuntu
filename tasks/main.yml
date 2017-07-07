@@ -1,0 +1,216 @@
+---
+- name: Include proper python or python3 vars file
+  include_vars: "{{ python_vars_file }}"
+
+- name: Fail if not a supported release of Ubuntu is used
+  fail:
+    msg: "{{ ansible_distribution_version }} is not an acceptable version of Ubuntu for this role"
+  when:
+    - ansible_distribution|lower != "ubuntu"
+    - ansible_distribution|lower == "ubuntu" and ansible_distribution_version|version_compare("14.04", "<")
+
+- name: Fail if using python3 with Ansible<2.3
+  fail:
+    msg: "Ansible 2.3+ is required to use Python3 interpreter."
+  when: ansible_version.full | version_compare("2.3", "<") and ansible_python_interpreter is defined and "python3" in ansible_python_interpreter
+
+- name: Install linux-image-extra-* packages to enable AuFS driver
+  apt:
+    pkg: "{{ item }}"
+    state: present
+    update_cache: yes
+    cache_valid_time: "{{ docker_apt_cache_valid_time }}"
+  with_items:
+    - linux-image-extra-{{ ansible_kernel }}
+    - linux-image-extra-virtual
+  when: docker_aufs_enabled and ansible_distribution_version|version_compare('14.04', '==')
+  register: linux_image_extra_install
+  ignore_errors: yes
+
+- name: Try again to install linux-image-extra if previous attempt failed
+  apt:
+    pkg: "linux-image-extra-{{ ansible_kernel.split('-')[:-1]|join('-') }}*"
+    state: present
+    update_cache: yes
+    cache_valid_time: "{{ docker_apt_cache_valid_time }}"
+  when: linux_image_extra_install|failed
+
+- name: Ensure old versions of Docker are not installed
+  package:
+    name: "{{ item }}"
+    state: absent
+  with_items: "{{ _docker_deprecated_pkg_names }}"
+
+- name: Ensure apt over HTTPS depdencies are installed
+  apt:
+    name: "{{ item }}"
+    state: present
+    cache_valid_time: "{{ docker_apt_cache_valid_time }}"
+  with_items: "{{ _docker_apt_https_dependencies }}"
+
+- name: Try to add the Docker apt key with ansible
+  apt_key:
+    url: "{{ docker_apt_key_url }}"
+    id: "{{ docker_apt_key_sig }}"
+    state: present
+  register: add_repository_key
+  ignore_errors: true
+
+- name: Try to add Docker apt key with curl for SNI support
+  shell: "curl -sSL {{ docker_apt_key_url }} | sudo apt-key add -"
+  args:
+    warn: no
+  when: add_repository_key|failed
+
+- name: Add the Docker repository
+  apt_repository:
+    repo: "{{ docker_apt_repository }}"
+    state: present
+    update_cache: yes
+
+- name: Install the Docker package from the repository
+  package:
+    name: "{{ docker_package }}"
+    state: present
+    cache_valid_time: "{{ docker_apt_cache_valid_time }}"
+
+- name: Merge the default config with the users daemon config
+  set_fact:
+    docker_json: "{{ _docker_config_default | combine(docker_config | default({})) }}"
+
+- name: Write the daemon.json file to disk
+  copy:
+    content: "{{ docker_json | to_nice_json(indent=2) }}"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - restart docker
+
+- name: Set docker daemon options
+  copy:
+    content: "DOCKER_OPTS=\"{{ docker_opts.rstrip() }}\""
+    dest: /etc/default/docker
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - restart docker
+  when:
+    - docker_opts != ""
+    - ansible_service_mgr != "systemd"
+
+- name: Create systemd configuration directory for Docker service (systemd)
+  file:
+    dest: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+  when:
+    - docker_opts != ""
+    - ansible_service_mgr == "systemd"
+
+- name: Set docker daemon options (systemd)
+  copy:
+    content: |
+      [Service]
+      Environment="DOCKER_OPTS={{ docker_opts.rstrip() }}"
+    dest: /etc/systemd/system/docker.service.d/env.conf
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - reload systemd
+    - restart docker
+  when:
+    - docker_opts != ""
+    - ansible_service_mgr == "systemd"
+
+- name: Ensure docker daemon options used (systemd)
+  template:
+    src: docker.conf
+    dest: /etc/systemd/system/docker.service.d/docker.conf
+  notify:
+    - reload systemd
+    - restart docker
+  when:
+    - docker_opts != ""
+    - ansible_service_mgr == "systemd"
+
+# We must install pip via apt before we can use the pip module below
+- name: "Install {{ _python_packages | join(', ') }} packages with apt"
+  apt:
+    pkg: "{{ item }}"
+    state: latest
+    update_cache: yes
+    cache_valid_time: "{{ docker_apt_cache_valid_time }}"
+  with_items: "{{ _python_packages }}"
+
+# Display an informative message if the docker-compose version needs to be downgraded
+- name: Docker-compose version downgrade
+  debug:
+    msg: >-
+      Downgrading docker-compose version to {{ _pip_version_docker_compose }} because of docker-compose > 1.10
+      requiring docker python package (instead of the docker-py one) which is incompatible with the docker_container
+      module in Ansible < 2.3
+  when: pip_install_docker_compose and _pip_version_docker_compose != pip_version_docker_compose
+
+# See vars/main.yml for more information on this.
+- name: Clean previous docker-py package if installing docker.
+  pip:
+    name: docker-py
+    state: absent
+    executable: "{{ _pip_executable }}"
+  when: (_pip_install_docker or pip_install_docker_compose) and _pip_docker_package_name == 'docker'
+
+# See vars/main.yml for more information on this.
+- name: Clean previous docker package if installing docker-py.
+  pip:
+    name: docker
+    state: absent
+    executable: "{{ _pip_executable }}"
+  when: (_pip_install_docker or pip_install_docker_compose) and _pip_docker_package_name == 'docker-py'
+
+# Upgrade pip with pip and install the specified packages
+- name: Install pip, setuptools, docker-py and docker-compose with pip
+  pip:
+    name: "{{ item.name }}"
+    state: "{{ 'latest' if item.version=='latest' else 'present' }}"
+    version: "{{ item.version if item.version!='latest' else omit }}"
+    executable: "{{ _pip_executable }}"
+  with_items:
+    - name: pip
+      version: "{{ docker_version_pip }}"
+      install: "{{ docker_install_pip }}"
+    - name: setuptools
+      version: "{{ docker_version_setuptools }}"
+      install: "{{ docker_install_setuptools }}"
+    - name: "{{ _pip_docker_package_name }}"
+      version: "{{ pip_version_docker }}"
+      install: "{{ _pip_install_docker }}"
+    - name: docker-compose
+      version: "{{ _pip_version_docker_compose }}"
+      install: "{{ pip_install_docker_compose }}"
+  when: item.install|bool
+
+- name: Check if /etc/updatedb.conf exists
+  stat:
+    path: /etc/updatedb.conf
+  register: updatedb_conf_exists
+
+- name: Ensure updatedb does not index /var/lib/docker
+  lineinfile:
+    dest: /etc/updatedb.conf
+    state: present
+    backrefs: yes
+    regexp: '^PRUNEPATHS="(/var/lib/docker )?(.*)"$'
+    line: 'PRUNEPATHS="/var/lib/docker \2"'
+  when: updatedb_conf_exists.stat.exists
+
+- name: Ensure Docker is started and enabled at boot
+  service:
+    name: docker
+    state: started
+    enabled: yes
