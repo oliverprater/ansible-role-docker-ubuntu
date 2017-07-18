@@ -88,6 +88,19 @@
   notify:
     - restart docker
 
+- name: Ensure that daemon.json and flags do not conflict on the hosts keyword
+  lineinfile:
+    path: /lib/systemd/system/docker.service
+    regexp: 'ExecStart=\/usr\/bin\/dockerd -H.*'
+    line: 'ExecStart=/usr/bin/dockerd'
+  notify:
+    - reload systemd
+    - restart docker
+  when:
+    - docker_opts == ""
+    - docker_json['hosts'] != ""
+    - ansible_service_mgr == "systemd"
+
 - name: Set docker daemon options
   copy:
     content: "DOCKER_OPTS=\"{{ docker_opts.rstrip() }}\""

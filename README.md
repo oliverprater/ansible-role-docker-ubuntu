@@ -66,6 +66,8 @@ The advantage of the flexibe `docker_config` variable becomes apparrent, when cr
 This advanced example has docker daemon listen on port 2376 of the host machine via `docker_opts` and configures Docker TLS usage via `docker_config`.
 The example makes several assumptions about the host machine setup, which are out of the scope of this roles configuration space.
 
+> IMPORTANT: When the `docker_config` contains the keyword `hosts` then `-H fd://` is removed from the docker.service file!
+
 Role Variables
 --------------
 
@@ -120,6 +122,16 @@ Please see [the docs for dockerd](https://docs.docker.com/engine/reference/comma
 The options set in the configuration file via `docker_config` must not conflict with options set via flags in `docker_opts`.
 
 > The docker daemon fails to start if an option is duplicated between the file and the flags, regardless their value.
+
+The failure to start the daemon due to duplication between the file and the flags is especially prevalent for the `hosts` keyword in the `daemon.json` file.
+It is possible to configure the entire daemon via `daemon.json`, but remember to also include the UNIX socket as a host:
+
+```
+  docker_config:
+    hosts: ["tcp://0.0.0.0:2375", "unix:///var/run/docker.sock"]
+```
+
+> IMPORTANT: When the `docker_config` contains the keyword `hosts` then `-H fd://` is removed from the docker.service file!
 
 Requirements
 ------------
